@@ -10,7 +10,14 @@ volatile unsigned char *portB =    (unsigned char *) 0x25;
 bool isIDLE = false; 
 bool isRunning = false;
 bool waterError = false;
-bool Error = false
+bool Error = false;
+
+
+#define DHTPIN 2     // The digital pin connected to the DHT sensor
+#define DHTTYPE DHT11   // Specify sensor type as DHT11
+
+// Initialize DHT sensor object
+DHT dht(DHTPIN, DHTTYPE);
 
 void DisplayTime(){
 
@@ -51,7 +58,7 @@ void loop(){
         return;
       }
 
-      if(Temp > temp_threshold){        
+      if(temp > temp_threshold){        
         
         isRunning = true;
 
@@ -65,12 +72,12 @@ void loop(){
           // Start motor
 
           // Check if temperature has cooled down
-          if(Temp < temp_threshold){
+          if(temp < temp_threshold){
             isRunning = false;
           }
 
           // Check if the water level is low
-          if(waterlevel < water_threshold){
+          if(waterLevel < water_threshold){
             waterError = true;
             isRunning = false;
           }
@@ -87,7 +94,7 @@ void loop(){
 
       }
 
-      if(waterlevel <= water_threshold || waterError){
+      if(waterLevel <= water_threshold || waterError){
         Error = true;
 
         while(Error){
