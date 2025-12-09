@@ -6,6 +6,8 @@
 // GPIO Pointers
 volatile unsigned char *portDDRB = (unsigned char *) 0x24;
 volatile unsigned char *portB =    (unsigned char *) 0x25;
+unsigned long lastPressTime = 0;
+const unsigned long debounceDelay = 50;  // ms
 
 bool isIDLE = false; 
 bool isRunning = false;
@@ -21,6 +23,23 @@ DHT dht(DHTPIN, DHTTYPE);
 
 void DisplayTime(){
 
+}
+
+bool readPin(uint8_t 12) {
+    return (PIND & (1 << 12)) != 0;
+}
+
+bool isPressed(uint8_t 12) {
+    bool pressed = !readPin(12);   // active LOW
+
+    if (pressed) {
+        unsigned long now = millis();
+        if (now - lastPressTime > debounceDelay) {
+            lastPressTime = now;
+            return true;  
+        }
+    }
+    return false;
 }
 
 void setup(){
