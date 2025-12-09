@@ -28,6 +28,9 @@ void setup(){
   // Set pins 13 and 12 as input
   *portDDRB &= ~((1 << 6) | (1 << 7));
 
+  // Set pins 53, 52, 51, 50 as ouput for LED
+  *portDDRB |= 0x0F;
+
   U0Init(9600);
   adc_init();
   dht.begin();
