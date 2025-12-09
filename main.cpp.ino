@@ -6,6 +6,7 @@
 // GPIO Pointers
 volatile unsigned char *portDDRB = (unsigned char *) 0x24;
 volatile unsigned char *portB =    (unsigned char *) 0x25;
+
 bool isIDLE = false; 
 bool isRunning = false;
 bool waterError = false;
@@ -16,6 +17,10 @@ void DisplayTime(){
 }
 
 void setup(){
+
+  // Set pins 13 and 12 as input
+  *portDDRB &= ~((1 << 6) | (1 << 7));
+
   U0Init(9600);
   adc_init();
   dht.begin();
