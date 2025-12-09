@@ -40,6 +40,11 @@ void loop(){
 
       // Display temperature and humidity while IDLE to serial
       
+      // Check if button is toggled
+      if(){
+        isIDLE = false;
+        return;
+      }
 
       if(Temp > temp_threshold){        
         
