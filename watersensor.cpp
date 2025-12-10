@@ -1,5 +1,12 @@
 // Daniel Garica
 #include "watersensor.h"
+#define RDA 0x80
+#define TBE 0x20  
+ 
+volatile unsigned char* my_ADMUX = (unsigned char*) 0x7C;
+volatile unsigned char* my_ADCSRB = (unsigned char*) 0x7B;
+volatile unsigned char* my_ADCSRA = (unsigned char*) 0x7A;
+volatile unsigned int* my_ADC_DATA = (unsigned int*) 0x78;
 
 void adc_init() {
   // setup the A register

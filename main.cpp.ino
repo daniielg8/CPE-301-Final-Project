@@ -1,18 +1,24 @@
 #include "watersensor.h"
 #include "serial.h"
 #include "DHT.h"
+#include <Wire.h>
+#include "RTClib.h"
+#include <LiquidCrystal.h>
 
+// initialize the library with the numbers of the interface pins
+LiquidCrystal lcd(6, 7, 8, 9, 10, 11);  // RS, E, D4, D5, D6, D7
+
+RTC_DS1307 rtc; // Create RTC Object
 
 // GPIO Pointers
 volatile unsigned char *portDDRB = (unsigned char *) 0x24;
 volatile unsigned char *portB =    (unsigned char *) 0x25;
+volatile unsigned char *portDDRE = (unsigned char *)0x2D;
+volatile unsigned char *portE    = (unsigned char *)0x2E;
+
+
 unsigned long lastPressTime = 0;
 const unsigned long debounceDelay = 50;  // ms
-
-bool isIDLE = false; 
-bool isRunning = false;
-bool waterError = false;
-bool Error = false;
 
 
 #define DHTPIN 2     // The digital pin connected to the DHT sensor
@@ -22,117 +28,225 @@ bool Error = false;
 DHT dht(DHTPIN, DHTTYPE);
 
 void DisplayTime(){
+  DateTime now = rtc.now();        // read the current time
+  
+}
+
+
+void setup(){
+
+  // Set as input pins 13 for toggle button and 12 for reset button and set pins 53, 52, 51, 50 as output for LED
+  *portDDRB &= ~((1 << 6) | (1 << 7));
+
+  *portDDRE |= (1 << 4) | (1 << 5);
+
+  // Enable pin
+  pinMode(4, OUTPUT);
+  digitalWrite(4, HIGH);
+
+
+  U0Init(9600);
+  adc_init();
+  dht.begin();
+
+  // Used for DisplayTime() ISR when toggle button is pressed
+
+
+  Wire.begin();      // initialize I2C
+  rtc.begin();       // initialize RTC communication
+
+  lcd.begin(16, 2);  // 16 col, 2 rows
 
 }
 
-bool readPin(uint8_t 12) {
-    return (PIND & (1 << 12)) != 0;
+bool readPin(int pinBit) {
+  return (PINB & (1 << pinBit)) != 0;
 }
 
-bool isPressed(uint8_t 12) {
-    bool pressed = !readPin(12);   // active LOW
+bool lastButtonState = false;
 
-    if (pressed) {
+bool isPressed(int pinBit) {
+    bool currentstate = readPin(pinBit);  
+
+    if (currentstate && !lastButtonState) {
         unsigned long now = millis();
         if (now - lastPressTime > debounceDelay) {
             lastPressTime = now;
             return true;  
         }
     }
+    lastButtonState = currentstate;
+
     return false;
 }
 
-void setup(){
-
-  // Set pins 13 and 12 as input
-  *portDDRB &= ~((1 << 6) | (1 << 7));
-
-  // Set pins 53, 52, 51, 50 as ouput for LED
-  *portDDRB |= 0x0F;
-
-  U0Init(9600);
-  adc_init();
-  dht.begin();
+bool toggleButtonPressed(){
+  // Check PB7 for pin 13
+  if(isPressed(7)){
+    return true;
+  } else {
+    return false;
+  }
 }
 
-void loop(){
-  float water_threshold = 200; 
-  float temp_threshold = 70;
+bool resetButtonPressed(){
+  // Check PB6 for pin 12
+  if(isPressed(6)){
+    return true;
+  } else {
+    return false;
+  }
+}
+
+
+void displayErrorScreen(){
+  lcd.print("Water level is too low");
+}
+
+void showReading(float temp, float humidity){
+  lcd.setCursor(0, 0);
+  lcd.print("Temp: ");
+  lcd.print(temp);
   
-  // Turn on yellow LED
+  lcd.setCursor(0, 1);
+  lcd.print("Humidity: ");
+  lcd.print(humidity);
+}
 
-  // Check if buttons is pressed 
-  if(){
-    isIDLE = true;
+
+void resetLEDs(){
+  *portB &= 0b0000;
+}
+
+void turnYellowLED(){
+  // turn on pin 50
+  *portB |= 0b1000;
+}
+
+void turnBlueLED(){
+  // turn on 51
+  *portB |= 0b0100;
+}
+
+void turnRedLED(){
+  // turn on 52
+  *portB |= 0b0010;
+}
+
+void turnGreenLED(){
+  // turn on 53
+  *portB |= 0b0001;
+}
+
+
+void startMotor(){
+  *portE |= (1 << 4);        // IN1 = HIGH
+  *portE &= ~(1 << 5);       // IN2 = LOW
+}
+
+void stopMotor(){
+  *portE &= ~(1 << 4);       // IN1 = LOW
+  *portE &= ~(1 << 5);       // IN2 = LOW
+}
+
+enum State { DISABLED, IDLE, RUNNING, ERROR };
+State currentState = DISABLED;
+
+float water_threshold = 200;
+float temp_threshold  = 70;
+
+
+void loop() {
+
+  // Read sensors each loop
+  int waterLevel = checklevel(0);
+  float humidity = dht.readHumidity();
+  float temp = dht.readTemperature(true);
+  
+  resetLEDs();
+  turnYellowLED();
+
+  // Universal button: toggle IDLE
+  if (toggleButtonPressed()) {
+    currentState = IDLE;
   }
 
-  if(isIDLE){
-      int waterLevel = checklevel(0);
 
-      float humidity = dht.readHumidity();
-      float temp = dht.readTemperature(true);
+  switch (currentState) {
+    // ---------------- IDLE STATE ----------------
+    case DISABLED:
+      // Don't display temperature or humidity
+      lcd.clear();
+      stopMotor();
+      break;
 
-      // Display temperature and humidity while IDLE to serial
+    case IDLE:
+      resetLEDs();
+      turnGreenLED();
+      startMotor();
+      showReading(temp, humidity);
+
+      // Enter RUNNING if too hot
+      if (temp > temp_threshold) {
+        currentState = RUNNING;
+      }
+
+      // Enter ERROR if water low
+      if (waterLevel <= water_threshold) {
+        currentState = ERROR;
+      }
+
+      // Stop 
+      if (toggleButtonPressed()) {
+        currentState = DISABLED;
+      }
       
-      // Check if button is toggled
-      if(){
-        isIDLE = false;
-        return;
+      break;
+
+
+    // ---------------- RUNNING STATE ----------------
+    case RUNNING:
+      resetLEDs();
+      turnBlueLED();
+      startMotor();
+
+      showReading(temp, humidity);
+
+      // Too cool -> stop
+      if (temp < temp_threshold) {
+        currentState = IDLE;
       }
 
-      if(temp > temp_threshold){        
-        
-        isRunning = true;
-
-        while(isRunning){
-          // Display temp and humidity on LCD
-          humidity = dht.readHumidity();
-          temp = dht.readTemperature(true);
-
-          // Turn Blue LED on
-
-          // Start motor
-
-          // Check if temperature has cooled down
-          if(temp < temp_threshold){
-            isRunning = false;
-          }
-
-          // Check if the water level is low
-          if(waterLevel < water_threshold){
-            waterError = true;
-            isRunning = false;
-          }
-
-          // When button is toggled to turn off
-          if(){
-            isIDLE = false;
-          }
-
-
-        }
-
-        // Turn off motor
-
+      // Water low -> error
+      if (waterLevel <= water_threshold) {
+        currentState = ERROR;
       }
 
-      if(waterLevel <= water_threshold || waterError){
-        Error = true;
-
-        while(Error){
-          // Display to LCD and turn on Red LED
-
-          // Check is reset button is pressed
-          if(){
-
-          }
-
-          // Check if button is toggled
-          if(){
-            isIDLE = false;
-          }
-        }
+      // Stop 
+      if (toggleButtonPressed()) {
+        currentState = DISABLED;
+        stopMotor();
       }
-    
+      break;
+
+
+    // ---------------- ERROR STATE ----------------
+    case ERROR:
+      resetLEDs();
+      turnRedLED();
+      stopMotor();
+      displayErrorScreen();
+
+      // Reset button clears error
+      if (resetButtonPressed()) {
+        currentState = IDLE;
+      }
+
+      if(toggleButtonPressed()){
+        currentState = DISABLED;
+      }
+
+      break;
   }
 }
+
