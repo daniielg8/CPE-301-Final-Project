@@ -31,3 +31,38 @@ void putChar(unsigned char U0pdata){
   while(!(*myUCSR0A & 0x20)); // Check if transmit buffer is empty
   *myUDR0 = U0pdata;
 }
+
+void putString(const char *s) {
+  while (*s) {
+    putChar(*s++);
+  }
+}
+
+void put2(int n) {
+  if (n < 10) putChar('0');
+  putInt(n);
+}
+
+void putInt(int n) {
+  char buffer[10];
+  int i = 0;
+
+  if (n == 0) {
+    putChar('0');
+    return;
+  }
+
+  if (n < 0) {
+    putChar('-');
+    n = -n;
+  }
+
+  while (n > 0) {
+    buffer[i++] = '0' + (n % 10);
+    n /= 10;
+  }
+
+  while (i--) {
+    putChar(buffer[i]);
+  }
+}

@@ -4,6 +4,12 @@
 #include <Wire.h>
 #include "RTClib.h"
 #include <LiquidCrystal.h>
+#include <Stepper.h>
+
+const int stepsPerRevolution = 2048; // 28BYJ-48 full revolution
+
+// Use your pins: 31, 33, 35, 37
+Stepper stepper(stepsPerRevolution, 31, 33, 35, 37);
 
 // initialize the library with the numbers of the interface pins
 LiquidCrystal lcd(6, 7, 8, 9, 10, 11);  // RS, E, D4, D5, D6, D7
@@ -11,6 +17,9 @@ LiquidCrystal lcd(6, 7, 8, 9, 10, 11);  // RS, E, D4, D5, D6, D7
 RTC_DS1307 rtc; // Create RTC Object
 
 // GPIO Pointers
+volatile unsigned char *portDDRG  = (unsigned char *)0x33;
+volatile unsigned char *portG = (unsigned char *)0x34;
+
 volatile unsigned char *portDDRB = (unsigned char *) 0x24;
 volatile unsigned char *portB =    (unsigned char *) 0x25;
 volatile unsigned char *portDDRE = (unsigned char *)0x2D;
@@ -21,29 +30,87 @@ unsigned long lastPressTime = 0;
 const unsigned long debounceDelay = 50;  // ms
 
 
-#define DHTPIN 2     // The digital pin connected to the DHT sensor
+#define DHTPIN 47     // The digital pin connected to the DHT sensor
 #define DHTTYPE DHT11   // Specify sensor type as DHT11
 
 // Initialize DHT sensor object
 DHT dht(DHTPIN, DHTTYPE);
 
-void DisplayTime(){
-  DateTime now = rtc.now();        // read the current time
-  
+void moveVent() {
+  uint16_t potValue = adc_read(1);
+
+  if (potValue > 530) {
+    int steps = map(potValue, 530, 1023, 1, 20);
+    stepper.step(steps);
+  } 
+  else if (potValue < 490) {
+    int steps = map(potValue, 0, 490, 20, 1);
+    stepper.step(-steps);
+  } 
+  else {
+    stepper.step(0); // stop
+  }
+}
+
+
+
+
+void printDate(DateTime now) {
+  putString("Date: ");
+  put2(now.day());
+  putChar('/');
+  put2(now.month());
+  putChar('/');
+  putInt(now.year());
+  putChar('\n');
+}
+
+
+void printTime(DateTime now) {
+  putString("Time: ");
+  put2(now.hour());
+  putChar(':');
+  put2(now.minute());
+  putChar(':');
+  put2(now.second());
+  putChar('\n');
+}
+
+void printTimestamp(DateTime now) {
+  putString("Timestamp: ");
+
+  // YYYY-MM-DD
+  putInt(now.year());
+  putChar('-');
+  put2(now.month());
+  putChar('-');
+  put2(now.day());
+  putChar(' ');
+
+  // HH:MM:SS
+  put2(now.hour());
+  putChar(':');
+  put2(now.minute());
+  putChar(':');
+  put2(now.second());
+
+  putChar('\n');
 }
 
 
 void setup(){
 
+
+
   // Set as input pins 13 for toggle button and 12 for reset button and set pins 53, 52, 51, 50 as output for LED
   *portDDRB &= ~((1 << 6) | (1 << 7));
+  *portB |= (1 << 6) | (1 << 7);         // enable pullups!
 
   *portDDRE |= (1 << 4) | (1 << 5);
 
   // Enable pin
-  pinMode(4, OUTPUT);
-  digitalWrite(4, HIGH);
-
+ *portDDRG |= (1 << 5);
+  *portG |= (1 << 5);
 
   U0Init(9600);
   adc_init();
@@ -55,6 +122,10 @@ void setup(){
   Wire.begin();      // initialize I2C
   rtc.begin();       // initialize RTC communication
 
+  if (!rtc.isrunning()) {
+      rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
+  }
+
   lcd.begin(16, 2);  // 16 col, 2 rows
 
 }
@@ -63,26 +134,28 @@ bool readPin(int pinBit) {
   return (PINB & (1 << pinBit)) != 0;
 }
 
-bool lastButtonState = false;
+bool lastToggleState = false;
+bool lastResetState = false;
 
-bool isPressed(int pinBit) {
-    bool currentstate = readPin(pinBit);  
+bool isPressed(int pinBit, bool &lastState) {
+    bool current = readPin(pinBit);
 
-    if (currentstate && !lastButtonState) {
+    if (current && !lastState) {
         unsigned long now = millis();
         if (now - lastPressTime > debounceDelay) {
             lastPressTime = now;
-            return true;  
+            lastState = current;
+            return true;
         }
     }
-    lastButtonState = currentstate;
 
+    lastState = current;
     return false;
 }
 
 bool toggleButtonPressed(){
   // Check PB7 for pin 13
-  if(isPressed(7)){
+  if(isPressed(7, lastToggleState)){
     return true;
   } else {
     return false;
@@ -91,7 +164,7 @@ bool toggleButtonPressed(){
 
 bool resetButtonPressed(){
   // Check PB6 for pin 12
-  if(isPressed(6)){
+  if(isPressed(6, lastResetState)){
     return true;
   } else {
     return false;
@@ -100,14 +173,17 @@ bool resetButtonPressed(){
 
 
 void displayErrorScreen(){
-  lcd.print("Water level is too low");
+  lcd.setCursor(0, 0);
+  lcd.print("Water level is");
+  lcd.setCursor(0, 1);
+  lcd.print("too low");
 }
 
 void showReading(float temp, float humidity){
   lcd.setCursor(0, 0);
   lcd.print("Temp: ");
   lcd.print(temp);
-  
+
   lcd.setCursor(0, 1);
   lcd.print("Humidity: ");
   lcd.print(humidity);
@@ -152,97 +228,104 @@ void stopMotor(){
 enum State { DISABLED, IDLE, RUNNING, ERROR };
 State currentState = DISABLED;
 
-float water_threshold = 200;
-float temp_threshold  = 70;
+float water_threshold = 300;
+float temp_threshold  = 74;
+
 
 
 void loop() {
+  DateTime now = rtc.now();
 
   // Read sensors each loop
-  int waterLevel = checklevel(0);
+  int waterLevel = checklevel(0);s
   float humidity = dht.readHumidity();
   float temp = dht.readTemperature(true);
   
-  resetLEDs();
-  turnYellowLED();
+  moveVent();
 
   // Universal button: toggle IDLE
   if (toggleButtonPressed()) {
     currentState = IDLE;
   }
 
-
   switch (currentState) {
-    // ---------------- IDLE STATE ----------------
     case DISABLED:
       // Don't display temperature or humidity
       lcd.clear();
       stopMotor();
+      resetLEDs();
+      turnYellowLED();
       break;
 
     case IDLE:
-      resetLEDs();
-      turnGreenLED();
-      startMotor();
-      showReading(temp, humidity);
+      showReading(temp, humidity);     
 
       // Enter RUNNING if too hot
       if (temp > temp_threshold) {
+        printTimestamp(now);
         currentState = RUNNING;
       }
 
       // Enter ERROR if water low
       if (waterLevel <= water_threshold) {
+        lcd.clear();
+        printTimestamp(now);
         currentState = ERROR;
       }
 
       // Stop 
       if (toggleButtonPressed()) {
+        printTimestamp(now);
         currentState = DISABLED;
       }
       
+      resetLEDs();
+      turnGreenLED();
       break;
 
-
-    // ---------------- RUNNING STATE ----------------
     case RUNNING:
-      resetLEDs();
-      turnBlueLED();
-      startMotor();
-
       showReading(temp, humidity);
 
       // Too cool -> stop
       if (temp < temp_threshold) {
+        printTimestamp(now);
         currentState = IDLE;
       }
 
       // Water low -> error
       if (waterLevel <= water_threshold) {
+        printTimestamp(now);
+        lcd.clear();
         currentState = ERROR;
       }
 
       // Stop 
       if (toggleButtonPressed()) {
+        printTimestamp(now);
         currentState = DISABLED;
-        stopMotor();
       }
+
+      resetLEDs();
+      turnBlueLED();
+      startMotor();
       break;
 
-
-    // ---------------- ERROR STATE ----------------
     case ERROR:
       resetLEDs();
       turnRedLED();
       stopMotor();
-      displayErrorScreen();
+      displayErrorScreen();     // show it
 
       // Reset button clears error
       if (resetButtonPressed()) {
+        printTimestamp(now);
+        lcd.clear();
         currentState = IDLE;
       }
 
-      if(toggleButtonPressed()){
+      if (toggleButtonPressed()) {
+        printTimestamp(now);
+        lcd.clear();
         currentState = DISABLED;
       }
 

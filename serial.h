@@ -9,4 +9,11 @@ unsigned char getChar();
 
 void putChar(unsigned char U0pdata);
 
+void putString(const char *s);
+
+void putInt(int n);
+
+void put2(int n);
+
+
 #endif
