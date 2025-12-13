@@ -35,24 +35,41 @@ const unsigned long debounceDelay = 50;  // ms
 
 // Initialize DHT sensor object
 DHT dht(DHTPIN, DHTTYPE);
-
-void moveVent() {
-  uint16_t potValue = adc_read(1);
-
-  if (potValue > 530) {
-    int steps = map(potValue, 530, 1023, 1, 20);
-    stepper.step(steps);
-  } 
-  else if (potValue < 490) {
-    int steps = map(potValue, 0, 490, 20, 1);
-    stepper.step(-steps);
-  } 
-  else {
-    stepper.step(0); // stop
-  }
+void releaseStepper() {
+  PORTC &= ~((1 << 0) | (1 << 2) | (1 << 4) | (1 << 6));
 }
 
+void moveVent() {
+    int pot = adc_read(1);
 
+    const int potMin = 530;
+    const int potMax = 1023;
+
+    // Calculate true center dynamically
+    const int potCenter = (potMin + potMax) / 2;   // = 776
+    const int deadband = 40;  // ±40 zone for stop
+
+
+    // Stop zone
+    if (abs(pot - potCenter) < deadband) {
+        releaseStepper();
+        return;
+    }
+
+    // Moving RIGHT
+    if (pot > potCenter + deadband) {
+        int steps = map(pot, potCenter + deadband, potMax, 1, 5);
+        stepper.step(steps);
+        return;
+    }
+
+    // Moving LEFT
+    if (pot < potCenter - deadband) {
+        int steps = map(pot, potMin, potCenter - deadband, 5, 1);
+        stepper.step(-steps);
+        return;
+    }
+}
 
 
 void printDate(DateTime now) {
@@ -99,9 +116,6 @@ void printTimestamp(DateTime now) {
 
 
 void setup(){
-
-
-
   // Set as input pins 13 for toggle button and 12 for reset button and set pins 53, 52, 51, 50 as output for LED
   *portDDRB &= ~((1 << 6) | (1 << 7));
   *portB |= (1 << 6) | (1 << 7);         // enable pullups!
@@ -116,8 +130,6 @@ void setup(){
   adc_init();
   dht.begin();
 
-  // Used for DisplayTime() ISR when toggle button is pressed
-
 
   Wire.begin();      // initialize I2C
   rtc.begin();       // initialize RTC communication
@@ -127,6 +139,7 @@ void setup(){
   }
 
   lcd.begin(16, 2);  // 16 col, 2 rows
+  stepper.setSpeed(10);
 
 }
 
@@ -228,8 +241,8 @@ void stopMotor(){
 enum State { DISABLED, IDLE, RUNNING, ERROR };
 State currentState = DISABLED;
 
-float water_threshold = 300;
-float temp_threshold  = 74;
+float water_threshold = 240;
+float temp_threshold  = 76;
 
 
 
@@ -237,12 +250,11 @@ void loop() {
   DateTime now = rtc.now();
 
   // Read sensors each loop
-  int waterLevel = checklevel(0);s
+  int waterLevel = checklevel(0);
   float humidity = dht.readHumidity();
   float temp = dht.readTemperature(true);
-  
-  moveVent();
-
+      Serial.print(waterLevel);
+      Serial.print('\n');
   // Universal button: toggle IDLE
   if (toggleButtonPressed()) {
     currentState = IDLE;
@@ -259,6 +271,8 @@ void loop() {
 
     case IDLE:
       showReading(temp, humidity);     
+      stopMotor();
+      moveVent();
 
       // Enter RUNNING if too hot
       if (temp > temp_threshold) {
@@ -284,14 +298,17 @@ void loop() {
       break;
 
     case RUNNING:
+      moveVent();
       showReading(temp, humidity);
 
       // Too cool -> stop
       if (temp < temp_threshold) {
         printTimestamp(now);
+        stopMotor();
+
         currentState = IDLE;
       }
-
+      
       // Water low -> error
       if (waterLevel <= water_threshold) {
         printTimestamp(now);
@@ -314,6 +331,7 @@ void loop() {
       resetLEDs();
       turnRedLED();
       stopMotor();
+      moveVent();
       displayErrorScreen();     // show it
 
       // Reset button clears error
@@ -332,4 +350,3 @@ void loop() {
       break;
   }
 }
-
