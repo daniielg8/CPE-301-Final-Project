@@ -1,3 +1,5 @@
+// Daniel Garcia and Joaquin Salazar
+
 #ifndef SERIAL_H
 #define SERIAL_H
 

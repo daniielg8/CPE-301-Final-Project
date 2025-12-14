@@ -1,3 +1,5 @@
+// Daniel Garcia and Joaquin Salazar
+
 #include "watersensor.h"
 #include "serial.h"
 #include "DHT.h"
@@ -35,42 +37,41 @@ const unsigned long debounceDelay = 50;  // ms
 
 // Initialize DHT sensor object
 DHT dht(DHTPIN, DHTTYPE);
-void releaseStepper() {
-  PORTC &= ~((1 << 0) | (1 << 2) | (1 << 4) | (1 << 6));
-}
+
+#define MAX_STEPS 512    // Adjust based on vent travel
+#define DEAD_BAND 4      // ignore tiny movements
+#define END_ZONE 15      // pot zone near 0 & 1023
 
 void moveVent() {
-    int pot = adc_read(1);
+  static int lastStepPos = -1;
 
-    const int potMin = 530;
-    const int potMax = 1023;
+  int potVal = adc_read(1);  // 0–1023
 
-    // Calculate true center dynamically
-    const int potCenter = (potMin + potMax) / 2;   // = 776
-    const int deadband = 40;  // ±40 zone for stop
+  // ----- Clamp ends -----
+  if (potVal < END_ZONE) {
+    potVal = 0;
+  } 
+  else if (potVal > (1023 - END_ZONE)) {
+    potVal = 1023;
+  }
 
+  int targetStepPos = map(potVal, 0, 1023, 0, MAX_STEPS);
 
-    // Stop zone
-    if (abs(pot - potCenter) < deadband) {
-        releaseStepper();
-        return;
-    }
+  if (lastStepPos == -1) {
+    lastStepPos = targetStepPos;
+    return;
+  }
 
-    // Moving RIGHT
-    if (pot > potCenter + deadband) {
-        int steps = map(pot, potCenter + deadband, potMax, 1, 5);
-        stepper.step(steps);
-        return;
-    }
+  int stepDelta = targetStepPos - lastStepPos;
 
-    // Moving LEFT
-    if (pot < potCenter - deadband) {
-        int steps = map(pot, potMin, potCenter - deadband, 5, 1);
-        stepper.step(-steps);
-        return;
-    }
+  // ----- Strong deadband -----
+  if (abs(stepDelta) <= DEAD_BAND) {
+    return;   // FULL STOP
+  }
+
+  stepper.step(stepDelta);
+  lastStepPos = targetStepPos;
 }
-
 
 void printDate(DateTime now) {
   putString("Date: ");
@@ -242,7 +243,7 @@ enum State { DISABLED, IDLE, RUNNING, ERROR };
 State currentState = DISABLED;
 
 float water_threshold = 240;
-float temp_threshold  = 76;
+float temp_threshold  = 78;
 
 
 
@@ -253,8 +254,7 @@ void loop() {
   int waterLevel = checklevel(0);
   float humidity = dht.readHumidity();
   float temp = dht.readTemperature(true);
-      Serial.print(waterLevel);
-      Serial.print('\n');
+
   // Universal button: toggle IDLE
   if (toggleButtonPressed()) {
     currentState = IDLE;

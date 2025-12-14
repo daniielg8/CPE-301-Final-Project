@@ -1,4 +1,5 @@
-// Daniel Garica
+// Daniel Garcia and Joaquin Salazar
+
 #include "watersensor.h"
 #define RDA 0x80
 #define TBE 0x20  

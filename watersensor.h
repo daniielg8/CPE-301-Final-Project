@@ -1,4 +1,5 @@
-// Daniel Garica
+// Daniel Garcia and Joaquin Salazar
+
 #ifndef WATERSENSOR_H
 #define WATERSENSOR_H
 
